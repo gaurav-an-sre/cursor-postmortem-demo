@@ -1,18 +1,58 @@
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from postmortem_agent.notion import chunk_blocks, markdown_to_blocks, publish_markdown
-from postmortem_agent.runner import MockAgent, run_workflow, should_run_remediation
+from postmortem_agent.runner import (
+    MockAgent,
+    run_workflow,
+    should_run_remediation,
+    strip_json_fence,
+)
 from postmortem_agent.tools import BundleTools
 from postmortem_agent.validation import ValidationError, validate_rca
 
 FIXTURES = Path(__file__).parent / "fixtures"
+HOOK = Path(__file__).parents[1] / ".cursor" / "hooks" / "deny_incident_writes.py"
 
 
 def fixture_rca() -> dict:
     return json.loads((FIXTURES / "mock_rca.json").read_text())
+
+
+def run_hook(tmp_path: Path, tool_name: str, tool_input: dict) -> dict:
+    result = subprocess.run(
+        [str(HOOK)],
+        input=json.dumps({"cwd": str(tmp_path), "tool_name": tool_name, "tool_input": tool_input}),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return json.loads(result.stdout)
+
+
+def test_immutable_evidence_hook_allows_reads_and_blocks_mutations(tmp_path: Path) -> None:
+    assert (
+        run_hook(tmp_path, "Write", {"path": "incidents/inc-1/metrics.csv"})["permission"] == "deny"
+    )
+    assert (
+        run_hook(tmp_path, "Shell", {"command": "rm examples/incidents/inc-1/metrics.csv"})[
+            "permission"
+        ]
+        == "deny"
+    )
+    assert (
+        run_hook(tmp_path, "Read", {"path": "incidents/inc-1/metrics.csv"})["permission"] == "allow"
+    )
+    assert (
+        run_hook(tmp_path, "Shell", {"command": "grep p99 incidents/inc-1/metrics.csv"})[
+            "permission"
+        ]
+        == "allow"
+    )
+    assert run_hook(tmp_path, "Write", {"path": "out/result.md"})["permission"] == "allow"
 
 
 def test_rca_validator_accepts_fixture_and_rejects_missing_key() -> None:
@@ -40,6 +80,11 @@ def test_severity_gate() -> None:
     assert not should_run_remediation("SEV2", no_remediation=True)
 
 
+def test_json_fence_is_removed_without_changing_unfenced_text() -> None:
+    assert strip_json_fence('```json\n{"ok": true}\n```') == '{"ok": true}'
+    assert strip_json_fence('{"ok": true}') == '{"ok": true}'
+
+
 def test_custom_tools_and_errors(tmp_path: Path) -> None:
     (tmp_path / "metrics.csv").write_text(
         "ts,rps,p50_ms,p95_ms,p99_ms,error_rate,rss_mb\n10,1,2,3,4,0,20\n",
@@ -56,6 +101,13 @@ def test_custom_tools_and_errors(tmp_path: Path) -> None:
     )
     assert "malformed regex" in tools.search_logs({"pattern": "[", "limit": 2})
     assert json.loads(tools.search_logs({"pattern": "500", "limit": 2})) == ['{"status":500}']
+    (tmp_path / "metrics.csv").write_text(
+        "ts,rps,p50_ms,p95_ms,p99_ms,error_rate,rss_mb\nbad,1,2,3,4,0,20\n",
+        encoding="utf-8",
+    )
+    assert "malformed metrics.csv row" in tools.query_metrics(
+        {"metric": "p99_ms", "from_ts": 0, "to_ts": 20}
+    )
 
 
 def test_markdown_conversion_and_chunking() -> None:
@@ -98,9 +150,22 @@ def test_notion_publisher_chunks_requests() -> None:
 
     markdown = "\n".join(f"## Heading {index}" for index in range(205))
     session = Session()
-    assert publish_markdown(markdown, "parent-id", "secret", session=session) == "page-id"
+    assert (
+        publish_markdown(
+            markdown, "parent-id", "secret", "Incident title", "inc-1", session=session
+        )
+        == "page-id"
+    )
     assert len(session.calls) == 3
     assert all(len(call[1]["json"]["children"]) <= 100 for call in session.calls)
+    title = session.calls[0][1]["json"]["properties"]["title"]["title"]
+    assert title[0]["text"]["content"] == "Incident title (inc-1)"
+
+
+def test_notion_text_is_split_at_api_limit() -> None:
+    blocks = markdown_to_blocks("```text\n" + ("x" * 4500) + "\n```")
+    rich_text = blocks[0]["code"]["rich_text"]
+    assert [len(item["text"]["content"]) for item in rich_text] == [2000, 2000, 500]
 
 
 def test_repair_run_fires_exactly_once(tmp_path: Path) -> None:
@@ -126,4 +191,5 @@ def test_repair_run_fires_exactly_once(tmp_path: Path) -> None:
     )
     assert output.exists()
     assert len(agent.sent) == 3
+    assert agent.closed
     assert (output.parent / "rca_repair.jsonl").exists()

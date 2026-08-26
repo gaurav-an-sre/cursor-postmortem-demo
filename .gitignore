@@ -6,6 +6,7 @@ __pycache__/
 .env
 *.egg-info/
 var/
+out/
 incidents/
 !examples/incidents/
 !examples/incidents/**

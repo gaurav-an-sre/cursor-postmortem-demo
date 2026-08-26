@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 
@@ -37,7 +38,14 @@ def main() -> None:
         return
     if not args.notion_parent:
         raise SystemExit("NOTION_PARENT_PAGE_ID or --notion-parent is required for publishing")
-    page_id = publish_markdown(postmortem.read_text(encoding="utf-8"), args.notion_parent, token)
+    rca = json.loads((postmortem.parent / "rca.json").read_text(encoding="utf-8"))
+    page_id = publish_markdown(
+        postmortem.read_text(encoding="utf-8"),
+        args.notion_parent,
+        token,
+        title=rca["title"],
+        incident_id=rca["incident_id"],
+    )
     print(f"Published Notion page: {page_id}")
 
 

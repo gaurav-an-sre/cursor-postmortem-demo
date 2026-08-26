@@ -12,7 +12,10 @@ NOTION_API = "https://api.notion.com/v1"
 
 
 def _text(content: str) -> list[dict[str, Any]]:
-    return [{"type": "text", "text": {"content": content}}]
+    return [
+        {"type": "text", "text": {"content": content[index : index + 2000]}}
+        for index in range(0, len(content), 2000)
+    ] or [{"type": "text", "text": {"content": ""}}]
 
 
 def _paragraph(text: str) -> dict[str, Any]:
@@ -131,7 +134,12 @@ def chunk_blocks(blocks: list[dict[str, Any]], size: int = 100) -> Iterable[list
 
 
 def publish_markdown(
-    markdown: str, parent_page_id: str, token: str, session: Any = requests
+    markdown: str,
+    parent_page_id: str,
+    token: str,
+    title: str,
+    incident_id: str,
+    session: Any = requests,
 ) -> str:
     blocks = markdown_to_blocks(markdown)
     headers = {
@@ -146,7 +154,7 @@ def publish_markdown(
         headers=headers,
         json={
             "parent": {"page_id": parent_page_id},
-            "properties": {"title": {"title": _text("SRE Postmortem")}},
+            "properties": {"title": {"title": _text(f"{title} ({incident_id})")}},
             "children": first,
         },
         timeout=30,

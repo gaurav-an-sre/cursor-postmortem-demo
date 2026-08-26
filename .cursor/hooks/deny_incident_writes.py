@@ -42,11 +42,52 @@ def protected(path_text: str, cwd: str) -> bool:
     return any(protected_path(candidate.strip("'\";,()"), cwd) for candidate in candidates)
 
 
+def shell_mutates(command: str) -> bool:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return True
+    commands = {"rm", "mv", "cp", "truncate", "dd", "chmod"}
+    if any(token in commands for token in tokens):
+        return True
+    quoted: str | None = None
+    escaped = False
+    for character in command:
+        if escaped:
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        elif quoted:
+            if character == quoted:
+                quoted = None
+        elif character in {"'", '"'}:
+            quoted = character
+        elif character == ">":
+            return True
+    for index, token in enumerate(tokens):
+        if token == "sed" and index + 1 < len(tokens) and tokens[index + 1].startswith("-i"):
+            return True
+        if token == "git" and any(
+            command in tokens[index + 1 :] for command in {"checkout", "apply", "restore"}
+        ):
+            return True
+    return False
+
+
 def main() -> None:
     payload = json.load(sys.stdin)
+    tool_name = str(payload.get("tool_name", "")).lower()
     tool_input = payload.get("tool_input", {})
     cwd = payload.get("cwd") or os.getcwd()
-    if protected(target_text(tool_input), cwd):
+    target = target_text(tool_input)
+    denied = False
+    if tool_name in {"write", "edit", "delete"}:
+        denied = protected(target, cwd)
+    elif tool_name == "shell":
+        denied = protected(target, cwd) and shell_mutates(
+            str(tool_input.get("command", target)) if isinstance(tool_input, dict) else target
+        )
+    if denied:
         print(
             json.dumps(
                 {

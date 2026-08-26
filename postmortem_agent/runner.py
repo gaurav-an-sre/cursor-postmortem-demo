@@ -37,6 +37,26 @@ def _message_text(message: Any) -> str:
     return "".join(getattr(block, "text", "") for block in content)
 
 
+def _event_field(message: Any, *names: str) -> Any:
+    for name in names:
+        value = getattr(message, name, None)
+        if value is not None:
+            return value
+        raw = _jsonable(message)
+        if isinstance(raw, dict) and name in raw:
+            return raw[name]
+    return None
+
+
+def strip_json_fence(text: str) -> str:
+    lines = text.strip().splitlines()
+    if lines and lines[0].strip().startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
 def stream_run(run: Any, name: str, output_dir: Path) -> tuple[str, str, dict[str, Any]]:
     events_path = output_dir / f"{name}.jsonl"
     started = time.perf_counter()
@@ -53,16 +73,24 @@ def stream_run(run: Any, name: str, output_dir: Path) -> tuple[str, str, dict[st
             elif message_type == "thinking":
                 print(f"[{name}] thinking: {text}", flush=True)
             elif message_type == "tool_call":
-                print(f"[{name}] tool_call: {text or _jsonable(message)}", flush=True)
+                tool_name = _event_field(message, "tool_name", "name") or "unknown"
+                status = _event_field(message, "status") or "unknown"
+                print(f"[{name}] tool_call: {tool_name} ({status})", flush=True)
             elif message_type == "status":
-                print(f"[{name}] status: {text or _jsonable(message)}", flush=True)
+                status = _event_field(message, "status", "value") or text or "unknown"
+                print(f"[{name}] status: {status}", flush=True)
             elif message_type == "usage":
-                print(f"[{name}] usage: {text or _jsonable(message)}", flush=True)
+                usage = _jsonable(_event_field(message, "usage")) or _jsonable(message)
+                if isinstance(usage, dict):
+                    total = usage.get("total_tokens", usage.get("totalTokens", "unknown"))
+                else:
+                    total = "unknown"
+                print(f"[{name}] usage: {total} total tokens", flush=True)
     result = run.wait()
     final_text = getattr(result, "result", "") or assistant_text
     usage = _jsonable(getattr(result, "usage", None)) or {}
     duration_ms = getattr(result, "duration_ms", None)
-    if duration_ms is None:
+    if not duration_ms:
         duration_ms = round((time.perf_counter() - started) * 1000)
     print(f"[{name}] complete: duration={duration_ms}ms usage={usage}", flush=True)
     return str(final_text), str(getattr(result, "id", getattr(run, "run_id", ""))), usage
@@ -118,6 +146,16 @@ class MockAgent:
     def __init__(self, responses: list[str]) -> None:
         self.responses = responses
         self.sent: list[str] = []
+        self.closed = False
+
+    def __enter__(self) -> MockAgent:
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self.closed = True
 
     def send(self, prompt: str) -> MockRun:
         self.sent.append(prompt)
@@ -141,30 +179,18 @@ def fixture_agent(incident_id: str) -> MockAgent:
     return MockAgent([rca, remediation, narrative])
 
 
-def run_workflow(
+def _execute_workflow(
     bundle_dir: Path,
     out_root: Path,
     repo: Path,
-    no_remediation: bool = False,
-    mock_agent: bool = False,
-    agent_factory: Callable[[Path, str, BundleTools], Any] | None = None,
+    no_remediation: bool,
+    agent: Any,
 ) -> Path:
     bundle = json.loads((bundle_dir / "bundle.json").read_text(encoding="utf-8"))
     incident_id = bundle["incident_id"]
     output_dir = out_root / incident_id
     output_dir.mkdir(parents=True, exist_ok=True)
     service = bundle["service"]
-    bundle_tools = BundleTools(bundle_dir)
-    api_key = os.getenv("CURSOR_API_KEY", "")
-    if mock_agent:
-        agent = fixture_agent(incident_id)
-    else:
-        if not api_key and agent_factory is None:
-            raise SystemExit(
-                "CURSOR_API_KEY is required; use --mock-agent for an offline fixture run"
-            )
-        agent = (agent_factory or create_sdk_agent)(repo, api_key, bundle_tools)
-
     run_ids: list[str] = []
     rca_prompt = render_prompt(
         "rca.md",
@@ -173,7 +199,7 @@ def run_workflow(
     raw_rca, run_id, _ = stream_run(agent.send(rca_prompt), "rca", output_dir)
     run_ids.append(run_id)
     try:
-        rca = json.loads(raw_rca)
+        rca = json.loads(strip_json_fence(raw_rca))
         validate_rca(rca)
     except (json.JSONDecodeError, ValidationError) as exc:
         repair_prompt = render_prompt("repair_json.md", {"error": str(exc)})
@@ -216,7 +242,7 @@ def run_workflow(
     )
     run_ids.append(narrative_id)
     try:
-        narrative = json.loads(raw_narrative)
+        narrative = json.loads(strip_json_fence(raw_narrative))
         validate_narrative(narrative)
     except (json.JSONDecodeError, ValidationError) as exc:
         (output_dir / "narrative.raw.txt").write_text(raw_narrative, encoding="utf-8")
@@ -238,3 +264,26 @@ def run_workflow(
     postmortem_path = output_dir / "postmortem.md"
     postmortem_path.write_text(document, encoding="utf-8")
     return postmortem_path
+
+
+def run_workflow(
+    bundle_dir: Path,
+    out_root: Path,
+    repo: Path,
+    no_remediation: bool = False,
+    mock_agent: bool = False,
+    agent_factory: Callable[[Path, str, BundleTools], Any] | None = None,
+) -> Path:
+    bundle = json.loads((bundle_dir / "bundle.json").read_text(encoding="utf-8"))
+    bundle_tools = BundleTools(bundle_dir)
+    api_key = os.getenv("CURSOR_API_KEY", "")
+    if mock_agent:
+        agent = fixture_agent(bundle["incident_id"])
+    else:
+        if not api_key and agent_factory is None:
+            raise SystemExit(
+                "CURSOR_API_KEY is required; use --mock-agent for an offline fixture run"
+            )
+        agent = (agent_factory or create_sdk_agent)(repo, api_key, bundle_tools)
+    with agent:
+        return _execute_workflow(bundle_dir, out_root, repo, no_remediation, agent)

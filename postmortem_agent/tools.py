@@ -35,11 +35,15 @@ class BundleTools:
                 rows = list(csv.DictReader(file))
         except OSError as exc:
             return f"error: unable to read metrics.csv: {exc}"
-        values = [
-            {"ts": float(row["ts"]), metric: float(row[metric])}
-            for row in rows
-            if start <= float(row["ts"]) <= end
-        ]
+        values = []
+        try:
+            for row in rows:
+                timestamp = float(row["ts"])
+                value = float(row[metric])
+                if start <= timestamp <= end:
+                    values.append({"ts": timestamp, metric: value})
+        except (KeyError, TypeError, ValueError) as exc:
+            return f"error: malformed metrics.csv row: {exc}"
         return json.dumps(values)
 
     def search_logs(self, arguments: dict[str, Any]) -> str:
