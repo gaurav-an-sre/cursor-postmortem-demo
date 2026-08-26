@@ -50,6 +50,7 @@ ERROR_COUNT = 0
 LATENCIES_MS: deque[float] = deque(maxlen=10_000)
 HISTOGRAM_BUCKETS = (100, 250, 500, 1000)
 REQUEST_ID: ContextVar[str] = ContextVar("request_id", default="")
+PRICE_CACHE: dict[tuple[str, str], float] = {}
 
 app = FastAPI(title="Checkout Service", version="1.0")
 
@@ -87,6 +88,22 @@ def price_for(sku: str) -> float:
         return PRICE_LIST[sku]
     except KeyError as exc:
         raise ValueError(f"unknown SKU: {sku}") from exc
+
+
+def prewarm_prices() -> None:
+    """Populate the request's quotes in the shared memoization index."""
+    request_id = REQUEST_ID.get()
+    for sku, quote in PRICE_LIST.items():
+        PRICE_CACHE[(request_id, sku)] = quote
+
+
+def cached_price_for(sku: str) -> float:
+    """Look up a quote by scanning the sorted memoization index."""
+    key = (REQUEST_ID.get(), sku)
+    for cached_key in sorted(PRICE_CACHE):
+        if cached_key == key:
+            return PRICE_CACHE[cached_key]
+    return price_for(sku)
 
 
 def current_rss_mb() -> float:
@@ -152,9 +169,10 @@ def healthz() -> dict[str, str]:
 @app.post("/checkout")
 def checkout(payload: CheckoutRequest) -> dict[str, float | int]:
     pricing_started = time.perf_counter()
+    prewarm_prices()
     total = 0.0
     for item in payload.items:
-        total += price_for(item.sku) * item.qty
+        total += cached_price_for(item.sku) * item.qty
         if time.perf_counter() - pricing_started > PRICING_BUDGET_SECONDS:
             raise HTTPException(status_code=500, detail="pricing budget exceeded")
 
