@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "narrative": "The pricing path was changed to make quote retrieval look faster, but its request-specific cache keys prevented reuse. The shared process retained every request's catalog of quotes, and sorting that growing index made each lookup cost more than the one before it. The existing pricing budget turned the eventual slowdown into explicit checkout failures. Restarting the service removed the accumulated state and restored the normal path.",
+  "why_it_took_this_long_to_detect": "Latency moved before errors, but only the sustained error rule paged. A memory-growth signal or a lower latency warning would have shortened the detection gap.",
+  "what_went_well": [
+    "The existing pricing budget prevented indefinitely slow requests.",
+    "The local watchdog detected sustained errors and restarted the service."
+  ],
+  "what_went_poorly": [
+    "The cache had no cardinality or memory guard.",
+    "The warning signal did not page before user-visible errors."
+  ],
+  "where_we_got_lucky": [
+    "A process restart cleared the accumulated cache without data migration."
+  ],
+  "lessons": [
+    "Cache key scope must be reviewed together with cache lifetime.",
+    "Resource growth signals should be correlated with latency before paging on errors."
+  ],
+  "reviewer_note": ""
+}

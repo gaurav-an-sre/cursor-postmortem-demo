@@ -1,0 +1,13 @@
+{
+  "incident_id": "inc-1787761269",
+  "service": "checkout_svc",
+  "environment": "local",
+  "schema_version": 1,
+  "artifacts": {
+    "alert": "alert.json",
+    "metrics": "metrics.csv",
+    "app_log": "app.log",
+    "deploy": "deploy.json",
+    "timeline": "timeline.json"
+  }
+}

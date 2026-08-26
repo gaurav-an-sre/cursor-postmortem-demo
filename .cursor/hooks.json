@@ -1,0 +1,8 @@
+{
+  "preToolUse": [
+    {
+      "command": ".cursor/hooks/deny_incident_writes.py",
+      "matcher": "Shell|Read|Write|Delete|Edit"
+    }
+  ]
+}

@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "incident_id": "fixture-incident",
+  "service": "checkout_svc",
+  "severity": "SEV2",
+  "title": "Per-request quote prewarming caused checkout latency and errors",
+  "summary": "A pricing cache change populated a shared cache for every request and then sorted it during lookups. The resulting memory growth and increasingly expensive sorting pushed checkout requests beyond the existing pricing budget.",
+  "detected_at": "2026-01-01T00:01:00+00:00",
+  "started_at": "2026-01-01T00:00:20+00:00",
+  "resolved_at": "2026-01-01T00:02:00+00:00",
+  "time_to_detect_seconds": 40,
+  "trigger": {
+    "kind": "deploy",
+    "commit_sha": "0123456789abcdef",
+    "commit_subject": "perf: memoize price lookups for checkout",
+    "description": "The pricing memoization deploy preceded the latency and error transition."
+  },
+  "root_cause": {
+    "mechanism": "Each checkout request prewarmed quotes for the entire catalog using a request-specific cache key. Those entries accumulated in a module-level cache, so memory grew with request volume. Each price lookup sorted all accumulated keys before finding its own entry, making the lookup increasingly expensive until the pre-existing pricing budget rejected requests.",
+    "code_locations": [
+      {
+        "path": "checkout_svc/app.py",
+        "lines": "70-95",
+        "why": "The deploy prewarms every catalog SKU and scans a sorted shared cache."
+      }
+    ],
+    "confidence": "high",
+    "confidence_rationale": "The deploy diff, source code, metrics, and logs all show the same causal chain."
+  },
+  "evidence": [
+    {
+      "source": "metrics",
+      "observation": "p99 increased from 65 ms to 607 ms while RSS increased from 66 MB to 245 MB.",
+      "supports": "The degradation grew with request volume."
+    },
+    {
+      "source": "logs",
+      "observation": "Checkout logs changed from status 200 to repeated status 500 responses.",
+      "supports": "Users received failed checkout responses."
+    },
+    {
+      "source": "code",
+      "observation": "prewarm_prices iterates over PRICE_LIST and cached_price_for sorts PRICE_CACHE.",
+      "supports": "The cache growth and sorting mechanism."
+    },
+    {
+      "source": "git",
+      "observation": "The deploy commit changed checkout_svc/app.py to add the cache behavior.",
+      "supports": "The deployment was the incident trigger."
+    }
+  ],
+  "ruled_out": [
+    {
+      "hypothesis": "A traffic spike caused the failures.",
+      "refuted_by": "The load generator stayed at approximately 8 requests per second while latency rose."
+    },
+    {
+      "hypothesis": "SQLite persistence was the primary bottleneck.",
+      "refuted_by": "The failing path occurs during pricing before the order insert and RSS rose with cache entries."
+    }
+  ],
+  "impact": {
+    "user_facing": "Checkout requests became slow and then failed with HTTP 500 responses.",
+    "routes_affected": ["/checkout"],
+    "failed_requests": 20,
+    "peak_p99_ms": 607.6,
+    "duration_seconds": 40
+  },
+  "contributing_factors": [
+    "The cache key included a unique request identifier.",
+    "The cache had no bound or eviction policy."
+  ],
+  "detection_gap": {
+    "description": "The paging policy waited for sustained errors even though latency and RSS had already moved.",
+    "missing_signal": "A current RSS growth alert would have identified the leak before checkout errors."
+  },
+  "action_items": [
+    {
+      "title": "Remove request-scoped cache growth from pricing",
+      "kind": "fix",
+      "priority": "P0",
+      "rationale": "The shared cache accumulated one catalog's quotes per request.",
+      "suggested_owner_role": "service owner"
+    },
+    {
+      "title": "Add an invariant test for cache cardinality",
+      "kind": "test",
+      "priority": "P1",
+      "rationale": "The regression was an unbounded data-structure invariant failure.",
+      "suggested_owner_role": "service owner"
+    },
+    {
+      "title": "Alert on sustained current RSS growth",
+      "kind": "monitoring",
+      "priority": "P1",
+      "rationale": "RSS growth preceded the paged error condition.",
+      "suggested_owner_role": "observability"
+    }
+  ]
+}

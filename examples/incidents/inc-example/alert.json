@@ -1,0 +1,30 @@
+{
+  "incident_id": "inc-1787761269",
+  "condition_name": "Checkout error rate > 5% for 20s",
+  "policy_name": "checkout-local-regression",
+  "state": "closed",
+  "breach_started_at": "2026-08-26T16:21:49.538000+00:00",
+  "started_at": "2026-08-26T16:22:09.559023+00:00",
+  "ended_at": "2026-08-26T16:22:18.974997+00:00",
+  "resource": {
+    "type": "local_service",
+    "labels": {
+      "service_name": "checkout_svc"
+    }
+  },
+  "resource_labels": {
+    "service_name": "checkout_svc",
+    "environment": "local"
+  },
+  "threshold": 0.05,
+  "observed_value": 0.65,
+  "preceding_warnings": [
+    {
+      "condition_name": "Checkout p99 latency > 150ms for 20s",
+      "breach_started_at": "2026-08-26T16:21:24.537000+00:00",
+      "observed_value": 677.75,
+      "paged": false
+    }
+  ],
+  "summary": "CRIT: Checkout error rate > 5% for 20s"
+}
