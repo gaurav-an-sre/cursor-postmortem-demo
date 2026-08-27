@@ -165,6 +165,18 @@ def _parse_timestamp(value: str) -> float:
     return datetime.fromisoformat(value).timestamp()
 
 
+def terminate_process(process: subprocess.Popen[str], timeout: float = 5) -> None:
+    if process.poll() is not None:
+        process.wait()
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
 def restart_service(pid: int, command: str) -> tuple[subprocess.Popen[str], float]:
     mitigation_at = time.time()
     try:
@@ -172,7 +184,7 @@ def restart_service(pid: int, command: str) -> tuple[subprocess.Popen[str], floa
     except ProcessLookupError:
         pass
     time.sleep(1)
-    process = subprocess.Popen(shlex.split(command), text=True)
+    process = subprocess.Popen(shlex.split(command), text=True, start_new_session=True)
     return process, mitigation_at
 
 
@@ -233,7 +245,11 @@ def watch(
         "summary": f"{rule['severity']}: {rule['condition_name']}",
     }
     mitigation_process, mitigation_at = restart_service(service_pid, restart_command)
-    wait_for_health(health_url)
+    try:
+        wait_for_health(health_url)
+    except BaseException:
+        terminate_process(mitigation_process)
+        raise
     time.sleep(mitigation_seconds)
     ended_at = time.time()
     alert["state"] = "closed"
@@ -296,7 +312,7 @@ def watch(
             },
         ]
     )
-    mitigation_process.terminate()
+    terminate_process(mitigation_process)
     return assemble_bundle(
         bundle_root,
         incident_id,

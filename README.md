@@ -69,6 +69,10 @@ Latency is expected to cross the warning threshold before the pricing budget
 starts returning errors. `rss_mb` is current process RSS, so the mitigation
 restart is visible as a drop rather than a high-water mark.
 
+RSS is read with `psutil.Process().memory_info().rss`, which represents the
+current resident set size on macOS and Linux. This behavior was verified on
+Linux and is untested on macOS in this repository.
+
 ## Run the postmortem agent
 
 After `make incident`, run the offline fixture-backed demo:
