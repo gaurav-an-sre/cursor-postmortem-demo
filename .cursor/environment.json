@@ -1,0 +1,5 @@
+{
+  "name": "cursor-postmortem-demo",
+  "user": "ubuntu",
+  "install": "./scripts/cloud_setup.sh"
+}
