@@ -110,13 +110,7 @@ hook that denies write, edit, delete, and shell targets under `incidents/` and
 
 ## Publishing through the SDK (MCP)
 
-To publish through the Cursor SDK, first publish the incident bundle into git:
-
-```sh
-python tools/publish_bundle.py --bundle incidents/<incident_id>
-```
-
-Then run the MCP publishing mode:
+Run the MCP publishing mode:
 
 ```sh
 NOTION_TOKEN=ntn_... python -m postmortem_agent \

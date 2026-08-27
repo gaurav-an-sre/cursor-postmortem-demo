@@ -101,11 +101,6 @@ def render_prompt(name: str, variables: dict[str, str]) -> str:
     return Template(prompt_path.read_text(encoding="utf-8")).safe_substitute(**variables)
 
 
-def render_preamble(name: str, variables: dict[str, str]) -> str:
-    prompt_path = Path(__file__).parent / "prompts" / name
-    return Template(prompt_path.read_text(encoding="utf-8")).safe_substitute(**variables)
-
-
 def ensure_branch(repo: Path, branch: str) -> None:
     existing = subprocess.run(
         ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=repo
@@ -231,7 +226,7 @@ def _execute_workflow(
     )
     if notion_mcp_token is not None:
         rca_prompt = _prepend_prompt(
-            render_preamble("notion_context_preamble.md", {"service": service}),
+            render_prompt("notion_context_preamble.md", {"service": service}),
             rca_prompt,
         )
     raw_rca, run_id, _ = stream_run(agent.send(rca_prompt), "rca", output_dir)
