@@ -1,4 +1,4 @@
-"""Three-run Cursor SDK workflow for one incident."""
+"""Cursor SDK workflow for one incident."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader
 
 from .tools import BundleTools
-from .validation import ValidationError, validate_narrative, validate_rca
+from .validation import ValidationError, validate_narrative, validate_publish, validate_rca
 
 
 def _jsonable(value: Any) -> Any:
@@ -101,6 +101,11 @@ def render_prompt(name: str, variables: dict[str, str]) -> str:
     return Template(prompt_path.read_text(encoding="utf-8")).safe_substitute(**variables)
 
 
+def render_preamble(name: str, variables: dict[str, str]) -> str:
+    prompt_path = Path(__file__).parent / "prompts" / name
+    return Template(prompt_path.read_text(encoding="utf-8")).safe_substitute(**variables)
+
+
 def ensure_branch(repo: Path, branch: str) -> None:
     existing = subprocess.run(
         ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=repo
@@ -111,14 +116,30 @@ def ensure_branch(repo: Path, branch: str) -> None:
         subprocess.run(["git", "switch", "-c", branch], cwd=repo, check=True)
 
 
-def create_sdk_agent(repo: Path, api_key: str, bundle_tools: BundleTools) -> Any:
-    from cursor_sdk import Agent, LocalAgentOptions
+def create_sdk_agent(
+    repo: Path,
+    api_key: str,
+    bundle_tools: BundleTools,
+    notion_mcp_token: str | None = None,
+) -> Any:
+    from cursor_sdk import Agent, AgentOptions, LocalAgentOptions, StdioMcpServerConfig
 
-    return Agent.create(
+    local = LocalAgentOptions(cwd=str(repo), custom_tools=bundle_tools.custom_tools())
+    if notion_mcp_token is None:
+        return Agent.create(model="composer-2.5", api_key=api_key, local=local)
+    options = AgentOptions(
         model="composer-2.5",
         api_key=api_key,
-        local=LocalAgentOptions(cwd=str(repo), custom_tools=bundle_tools.custom_tools()),
+        local=local,
+        mcp_servers={
+            "notion": StdioMcpServerConfig(
+                command="npx",
+                args=["-y", "@notionhq/notion-mcp-server"],
+                env={"NOTION_TOKEN": notion_mcp_token},
+            )
+        },
     )
+    return Agent.create(options=options)
 
 
 @dataclass
@@ -173,6 +194,10 @@ def remediation_skip_summary(severity: str, no_remediation: bool = False) -> str
     return "Remediation skipped: advisory-only SEV3 posture."
 
 
+def _prepend_prompt(preamble: str, prompt: str) -> str:
+    return f"{preamble}\n\n{prompt}"
+
+
 def fixture_agent(incident_id: str) -> MockAgent:
     fixture_dir = Path(__file__).parents[1] / "tests" / "fixtures"
     rca = (
@@ -191,6 +216,8 @@ def _execute_workflow(
     repo: Path,
     no_remediation: bool,
     agent: Any,
+    notion_mcp_token: str | None = None,
+    notion_parent_page_id: str | None = None,
 ) -> Path:
     bundle = json.loads((bundle_dir / "bundle.json").read_text(encoding="utf-8"))
     incident_id = bundle["incident_id"]
@@ -202,6 +229,11 @@ def _execute_workflow(
         "rca.md",
         {"service": service, "incident_id": incident_id, "bundle_dir": str(bundle_dir.resolve())},
     )
+    if notion_mcp_token is not None:
+        rca_prompt = _prepend_prompt(
+            render_preamble("notion_context_preamble.md", {"service": service}),
+            rca_prompt,
+        )
     raw_rca, run_id, _ = stream_run(agent.send(rca_prompt), "rca", output_dir)
     run_ids.append(run_id)
     try:
@@ -269,6 +301,28 @@ def _execute_workflow(
     )
     postmortem_path = output_dir / "postmortem.md"
     postmortem_path.write_text(document, encoding="utf-8")
+    if notion_mcp_token is not None:
+        if not notion_parent_page_id:
+            raise SystemExit("MCP publishing requires --notion-parent or NOTION_PARENT_PAGE_ID")
+        publish_prompt = render_prompt(
+            "publish.md",
+            {
+                "incident_id": incident_id,
+                "postmortem_path": str(postmortem_path),
+                "parent_page_id": notion_parent_page_id,
+            },
+        )
+        raw_publish, publish_id, _ = stream_run(agent.send(publish_prompt), "publish", output_dir)
+        run_ids.append(publish_id)
+        try:
+            publish = json.loads(strip_json_fence(raw_publish))
+            validate_publish(publish)
+        except (json.JSONDecodeError, ValidationError) as exc:
+            (output_dir / "publish.raw.txt").write_text(raw_publish, encoding="utf-8")
+            raise SystemExit(f"Publish response was invalid: {exc}") from exc
+        (output_dir / "publish.json").write_text(
+            json.dumps(publish, indent=2) + "\n", encoding="utf-8"
+        )
     return postmortem_path
 
 
@@ -279,6 +333,8 @@ def run_workflow(
     no_remediation: bool = False,
     mock_agent: bool = False,
     agent_factory: Callable[[Path, str, BundleTools], Any] | None = None,
+    notion_mcp_token: str | None = None,
+    notion_parent_page_id: str | None = None,
 ) -> Path:
     bundle = json.loads((bundle_dir / "bundle.json").read_text(encoding="utf-8"))
     bundle_tools = BundleTools(bundle_dir)
@@ -290,6 +346,17 @@ def run_workflow(
             raise SystemExit(
                 "CURSOR_API_KEY is required; use --mock-agent for an offline fixture run"
             )
-        agent = (agent_factory or create_sdk_agent)(repo, api_key, bundle_tools)
+        if agent_factory is not None:
+            agent = agent_factory(repo, api_key, bundle_tools)
+        else:
+            agent = create_sdk_agent(repo, api_key, bundle_tools, notion_mcp_token)
     with agent:
-        return _execute_workflow(bundle_dir, out_root, repo, no_remediation, agent)
+        return _execute_workflow(
+            bundle_dir,
+            out_root,
+            repo,
+            no_remediation,
+            agent,
+            notion_mcp_token,
+            notion_parent_page_id,
+        )

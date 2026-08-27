@@ -1,4 +1,4 @@
-"""Validators for the authored RCA and narrative contracts."""
+"""Validators for the authored RCA, narrative, and publish contracts."""
 
 from __future__ import annotations
 
@@ -178,5 +178,20 @@ def validate_narrative(value: Any) -> None:
     for key in ("what_went_well", "what_went_poorly", "lessons"):
         _list(root.get(key), key, errors, minimum=2)
     _list(root.get("where_we_got_lucky"), "where_we_got_lucky", errors)
+    if errors:
+        raise ValidationError(errors)
+
+
+def validate_publish(value: Any) -> None:
+    errors: list[str] = []
+    root = _mapping(value, "response", errors)
+    for key in ("page_id", "page_url", "blocks_written"):
+        _require(root, key, errors)
+    for key in ("page_id", "page_url"):
+        if key in root:
+            _string(root[key], key, errors)
+    blocks_written = root.get("blocks_written")
+    if not isinstance(blocks_written, int) or isinstance(blocks_written, bool):
+        errors.append("blocks_written must be an integer")
     if errors:
         raise ValidationError(errors)

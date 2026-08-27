@@ -108,6 +108,31 @@ Incident evidence is immutable. `.cursor/hooks.json` installs a pre-tool-use
 hook that denies write, edit, delete, and shell targets under `incidents/` and
 `examples/incidents/`.
 
+## Publishing through the SDK (MCP)
+
+To publish through the Cursor SDK, first publish the incident bundle into git:
+
+```sh
+python tools/publish_bundle.py --bundle incidents/<incident_id>
+```
+
+Then run the MCP publishing mode:
+
+```sh
+NOTION_TOKEN=ntn_... python -m postmortem_agent \
+  --bundle incidents/<incident_id> --notion-mode mcp \
+  --notion-parent <parent_page_id>
+```
+
+The Cursor GitHub app must have access to the repository. The hosted Notion MCP
+endpoint requires OAuth and returns `403` for internal integration tokens, so
+this demo starts the official stdio server locally with
+`npx -y @notionhq/notion-mcp-server`. The existing bundle evidence tools remain
+local-runtime tools; MCP mode adds the agent's Notion connection for workspace
+publishing. The deterministic `api` mode remains the default and uses the HTTP
+publisher with its guaranteed 100-block and 2000-character chunking. MCP mode
+delegates block conversion to the model, so page structure is not guaranteed.
+
 ## Example evidence
 
 `examples/incidents/inc-example/` is a committed bundle produced by a real
