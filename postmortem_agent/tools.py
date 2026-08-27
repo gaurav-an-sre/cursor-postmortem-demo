@@ -36,14 +36,17 @@ class BundleTools:
         except OSError as exc:
             return f"error: unable to read metrics.csv: {exc}"
         values = []
-        try:
-            for row in rows:
+        for row in rows:
+            raw_value = row.get(metric)
+            if raw_value in (None, ""):
+                continue
+            try:
                 timestamp = float(row["ts"])
-                value = float(row[metric])
-                if start <= timestamp <= end:
-                    values.append({"ts": timestamp, metric: value})
-        except (KeyError, TypeError, ValueError) as exc:
-            return f"error: malformed metrics.csv row: {exc}"
+                value = float(raw_value)
+            except (KeyError, TypeError, ValueError) as exc:
+                return f"error: malformed metrics.csv row: {exc}"
+            if start <= timestamp <= end:
+                values.append({"ts": timestamp, metric: value})
         return json.dumps(values)
 
     def search_logs(self, arguments: dict[str, Any]) -> str:

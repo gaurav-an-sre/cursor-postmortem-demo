@@ -57,17 +57,19 @@ The command starts a fresh SQLite database, runs local load and watchdog
 processes, restarts the service as mitigation, closes the alert, and prints
 the resulting incident bundle path.
 
-The default run uses 20 requests per second for up to 80 seconds. The
+The default run uses 8 requests per second for up to 80 seconds. The
 thresholds are deterministic, so the cache regression should produce a
 visible latency/error transition on a laptop:
 
 ```text
-INCIDENT_RPS=20 INCIDENT_DURATION=80 make incident
+INCIDENT_RPS=8 INCIDENT_DURATION=80 make incident
 ```
 
 Latency is expected to cross the warning threshold before the pricing budget
 starts returning errors. `rss_mb` is current process RSS, so the mitigation
 restart is visible as a drop rather than a high-water mark.
+An empty `rss_mb` field means the metrics scrape was dropped; it does not mean
+memory was zero.
 
 RSS is read with `psutil.Process().memory_info().rss`, which represents the
 current resident set size on macOS and Linux. This behavior was verified on

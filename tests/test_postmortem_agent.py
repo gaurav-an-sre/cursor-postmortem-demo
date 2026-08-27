@@ -7,6 +7,7 @@ import pytest
 from postmortem_agent.notion import chunk_blocks, markdown_to_blocks, publish_markdown
 from postmortem_agent.runner import (
     MockAgent,
+    remediation_skip_summary,
     run_workflow,
     should_run_remediation,
     strip_json_fence,
@@ -80,6 +81,13 @@ def test_severity_gate() -> None:
     assert not should_run_remediation("SEV2", no_remediation=True)
 
 
+def test_remediation_skip_reasons_are_distinct() -> None:
+    assert remediation_skip_summary("SEV2", no_remediation=True) == (
+        "Remediation skipped by explicit operator request for SEV2 incident."
+    )
+    assert remediation_skip_summary("SEV3") == "Remediation skipped: advisory-only SEV3 posture."
+
+
 def test_json_fence_is_removed_without_changing_unfenced_text() -> None:
     assert strip_json_fence('```json\n{"ok": true}\n```') == '{"ok": true}'
     assert strip_json_fence('{"ok": true}') == '{"ok": true}'
@@ -95,6 +103,13 @@ def test_custom_tools_and_errors(tmp_path: Path) -> None:
     tools = BundleTools(tmp_path)
     assert json.loads(tools.query_metrics({"metric": "p99_ms", "from_ts": 0, "to_ts": 20})) == [
         {"ts": 10.0, "p99_ms": 4.0}
+    ]
+    (tmp_path / "metrics.csv").write_text(
+        "ts,rps,p50_ms,p95_ms,p99_ms,error_rate,rss_mb\n10,1,2,3,4,0,\n15,1,2,3,5,0,20\n",
+        encoding="utf-8",
+    )
+    assert json.loads(tools.query_metrics({"metric": "rss_mb", "from_ts": 0, "to_ts": 20})) == [
+        {"ts": 15.0, "rss_mb": 20.0}
     ]
     assert "unknown metric" in tools.query_metrics(
         {"metric": "not_a_metric", "from_ts": 0, "to_ts": 20}
