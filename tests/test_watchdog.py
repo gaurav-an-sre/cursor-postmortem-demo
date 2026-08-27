@@ -35,3 +35,12 @@ def test_critical_alert_requires_sustained_errors() -> None:
     metrics = rows("error_rate", [0.1, 0.1, 0.1, 0.1])
     rule = evaluate_rules(metrics)
     assert rule is None
+
+
+def test_rules_ignore_blank_rss_values() -> None:
+    metrics = rows("error_rate", [0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
+    for metric in metrics:
+        metric["rss_mb"] = ""
+    rule = evaluate_rules(metrics)
+    assert rule is not None
+    assert rule["severity"] == "CRIT"

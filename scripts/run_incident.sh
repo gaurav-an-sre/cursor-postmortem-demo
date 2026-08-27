@@ -35,7 +35,7 @@ else:
 
 # BSD date has no %N, so take the sub-second load start time from Python.
 LOAD_STARTED_AT=$("$PYTHON" -c "import time; print(time.time())")
-"$PYTHON" tools/loadgen.py --url "http://127.0.0.1:$PORT/checkout" --rps "${INCIDENT_RPS:-20}" \
+"$PYTHON" tools/loadgen.py --url "http://127.0.0.1:$PORT/checkout" --rps "${INCIDENT_RPS:-8}" \
     --duration "${INCIDENT_DURATION:-80}" --output var/metrics.csv &
 LOADGEN_PID=$!
 "$PYTHON" tools/watchdog.py --metrics var/metrics.csv --log var/app.log --bundle-root incidents \

@@ -167,6 +167,12 @@ def should_run_remediation(severity: str, no_remediation: bool = False) -> bool:
     return not no_remediation and severity in {"SEV1", "SEV2"}
 
 
+def remediation_skip_summary(severity: str, no_remediation: bool = False) -> str:
+    if no_remediation:
+        return f"Remediation skipped by explicit operator request for {severity} incident."
+    return "Remediation skipped: advisory-only SEV3 posture."
+
+
 def fixture_agent(incident_id: str) -> MockAgent:
     fixture_dir = Path(__file__).parents[1] / "tests" / "fixtures"
     rca = (
@@ -215,7 +221,7 @@ def _execute_workflow(
     frozen_rca = (output_dir / "rca.json").read_text(encoding="utf-8")
 
     severity = rca["severity"]
-    remediation_summary = "Remediation skipped: advisory-only SEV3 posture."
+    remediation_summary = remediation_skip_summary(severity, no_remediation)
     if should_run_remediation(severity, no_remediation):
         branch = f"postmortem/{incident_id}"
         ensure_branch(repo, branch)

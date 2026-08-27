@@ -46,16 +46,19 @@ def request_once(url: str, request_number: int) -> tuple[float, int]:
     return (time.perf_counter() - started) * 1000, status
 
 
-def read_rss_mb(metrics_url: str) -> float:
+def read_rss_mb(metrics_url: str) -> float | None:
     try:
-        with urllib.request.urlopen(metrics_url, timeout=1) as response:
+        with urllib.request.urlopen(metrics_url, timeout=3) as response:
             text = response.read().decode()
     except (TimeoutError, urllib.error.URLError):
-        return 0.0
+        return None
     for line in text.splitlines():
         if line.startswith("process_resident_memory_bytes "):
-            return float(line.rsplit(" ", 1)[1]) / 1024 / 1024
-    return 0.0
+            try:
+                return float(line.rsplit(" ", 1)[1]) / 1024 / 1024
+            except ValueError:
+                return None
+    return None
 
 
 def run_load(url: str, rps: float, duration: float, output: Path) -> None:
@@ -100,6 +103,7 @@ def run_load(url: str, rps: float, duration: float, output: Path) -> None:
                     ]
                 latencies = [record[1] for record in window]
                 errors = sum(record[2] >= 500 for record in window)
+                rss_mb = read_rss_mb(url.removesuffix("/checkout") + "/metrics")
                 writer.writerow(
                     {
                         "ts": f"{window_end:.3f}",
@@ -108,7 +112,7 @@ def run_load(url: str, rps: float, duration: float, output: Path) -> None:
                         "p95_ms": f"{percentile(latencies, 0.95):.2f}",
                         "p99_ms": f"{percentile(latencies, 0.99):.2f}",
                         "error_rate": f"{errors / max(len(window), 1):.4f}",
-                        "rss_mb": f"{read_rss_mb(url.removesuffix('/checkout') + '/metrics'):.2f}",
+                        "rss_mb": "" if rss_mb is None else f"{rss_mb:.2f}",
                     }
                 )
                 csv_file.flush()
@@ -121,7 +125,7 @@ def run_load(url: str, rps: float, duration: float, output: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default="http://127.0.0.1:8000/checkout")
-    parser.add_argument("--rps", type=float, default=20)
+    parser.add_argument("--rps", type=float, default=8)
     parser.add_argument("--duration", type=float, default=80)
     parser.add_argument("--output", type=Path, default=Path("var/metrics.csv"))
     args = parser.parse_args()
