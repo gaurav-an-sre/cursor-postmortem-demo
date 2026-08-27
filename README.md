@@ -2,7 +2,7 @@
 
 This repository is a local-only SRE incident showcase. The checkout service,
 load generator, and incident watchdog run with Python on macOS; no Docker,
-Prometheus, GCP, or external service is required.
+Prometheus,  or external service is required.
 
 The showcase has two halves: **Notion is the surface and the context, Cursor is
 the agent engine**. The first half creates an observable local incident and
