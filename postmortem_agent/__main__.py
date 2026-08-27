@@ -21,8 +21,18 @@ def main() -> None:
     parser.add_argument("--mock-agent", action="store_true")
     parser.add_argument("--no-remediation", action="store_true")
     parser.add_argument("--notion-parent", default=os.getenv("NOTION_PARENT_PAGE_ID"))
+    parser.add_argument("--notion-mode", choices=("api", "mcp"), default="api")
     parser.add_argument("--out", type=Path, default=Path("out"))
     args = parser.parse_args()
+    if args.notion_mode == "mcp" and args.dry_run:
+        parser.error("--dry-run cannot be used with --notion-mode mcp")
+    if args.notion_mode == "mcp" and args.mock_agent:
+        parser.error("--mock-agent cannot be used with --notion-mode mcp")
+    notion_token = os.getenv("NOTION_TOKEN") if args.notion_mode == "mcp" else None
+    if args.notion_mode == "mcp" and not notion_token:
+        parser.error("--notion-mode mcp requires NOTION_TOKEN to start the stdio server")
+    if args.notion_mode == "mcp" and not args.notion_parent:
+        parser.error("--notion-mode mcp requires --notion-parent or NOTION_PARENT_PAGE_ID")
 
     postmortem = run_workflow(
         args.bundle.resolve(),
@@ -30,7 +40,13 @@ def main() -> None:
         Path.cwd(),
         no_remediation=args.no_remediation,
         mock_agent=args.mock_agent,
+        notion_mcp_token=notion_token,
+        notion_parent_page_id=args.notion_parent,
     )
+    if args.notion_mode == "mcp":
+        publish = json.loads((postmortem.parent / "publish.json").read_text(encoding="utf-8"))
+        print(f"Published Notion page: {publish['page_url']}")
+        return
     token = os.getenv("NOTION_TOKEN")
     dry_run = args.dry_run or not token
     if dry_run:

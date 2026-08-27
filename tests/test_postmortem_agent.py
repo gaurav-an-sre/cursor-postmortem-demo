@@ -1,19 +1,23 @@
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+import postmortem_agent.__main__ as cli
 from postmortem_agent.notion import chunk_blocks, markdown_to_blocks, publish_markdown
 from postmortem_agent.runner import (
     MockAgent,
+    _execute_workflow,
+    create_sdk_agent,
     remediation_skip_summary,
     run_workflow,
     should_run_remediation,
     strip_json_fence,
 )
 from postmortem_agent.tools import BundleTools
-from postmortem_agent.validation import ValidationError, validate_rca
+from postmortem_agent.validation import ValidationError, validate_publish, validate_rca
 
 FIXTURES = Path(__file__).parent / "fixtures"
 HOOK = Path(__file__).parents[1] / ".cursor" / "hooks" / "deny_incident_writes.py"
@@ -74,6 +78,17 @@ def test_rca_validator_checks_enum_and_minimum_counts() -> None:
     assert "evidence must contain at least 4 items" in str(error.value)
 
 
+def test_publish_validator_checks_required_fields_and_integer_count() -> None:
+    valid = {"page_id": "page-id", "page_url": "https://notion.so/page-id", "blocks_written": 12}
+    validate_publish(valid)
+    for invalid in (
+        {"page_id": "page-id", "blocks_written": 12},
+        {"page_id": "page-id", "page_url": "url", "blocks_written": "12"},
+    ):
+        with pytest.raises(ValidationError):
+            validate_publish(invalid)
+
+
 def test_severity_gate() -> None:
     assert should_run_remediation("SEV1")
     assert should_run_remediation("SEV2")
@@ -91,6 +106,114 @@ def test_remediation_skip_reasons_are_distinct() -> None:
 def test_json_fence_is_removed_without_changing_unfenced_text() -> None:
     assert strip_json_fence('```json\n{"ok": true}\n```') == '{"ok": true}'
     assert strip_json_fence('{"ok": true}') == '{"ok": true}'
+
+
+def test_sdk_agent_mcp_config_is_optional(monkeypatch: pytest.MonkeyPatch) -> None:
+    import cursor_sdk
+
+    calls: list[tuple[tuple, dict]] = []
+
+    class FakeAgent:
+        @staticmethod
+        def create(*args, **kwargs):
+            calls.append((args, kwargs))
+            return object()
+
+    monkeypatch.setattr(cursor_sdk, "Agent", FakeAgent)
+    bundle_tools = BundleTools(FIXTURES)
+    create_sdk_agent(Path("."), "api-key", bundle_tools)
+    assert "mcp_servers" not in calls[0][1]
+
+    create_sdk_agent(Path("."), "api-key", bundle_tools, "notion-secret")
+    options = calls[1][1]["options"]
+    assert options.mcp_servers["notion"].command == "npx"
+    assert options.mcp_servers["notion"].args == ["-y", "@notionhq/notion-mcp-server"]
+    assert options.mcp_servers["notion"].env == {"NOTION_TOKEN": "notion-secret"}
+
+
+def test_mcp_prepends_notion_context_and_runs_publish(tmp_path: Path) -> None:
+    bundle_dir = Path(__file__).parents[1] / "examples" / "incidents" / "inc-example"
+    rca = (FIXTURES / "mock_rca.json").read_text().replace("fixture-incident", "inc-1787761269")
+    narrative = (FIXTURES / "mock_narrative.json").read_text()
+    publish = json.dumps(
+        {"page_id": "page-id", "page_url": "https://notion.so/page-id", "blocks_written": 10}
+    )
+    agent = MockAgent([rca, narrative, publish])
+    output = _execute_workflow(
+        bundle_dir,
+        tmp_path / "out",
+        Path(__file__).parents[1],
+        no_remediation=True,
+        agent=agent,
+        notion_mcp_token="notion-secret",
+        notion_parent_page_id="parent-id",
+    )
+    assert output.exists()
+    assert agent.sent[0].startswith("## Workspace context (Notion MCP)")
+    assert len(agent.sent) == 3
+    assert json.loads((output.parent / "publish.json").read_text())["page_id"] == "page-id"
+
+    local_agent = MockAgent([rca, narrative])
+    _execute_workflow(
+        bundle_dir,
+        tmp_path / "local-out",
+        Path(__file__).parents[1],
+        no_remediation=True,
+        agent=local_agent,
+    )
+    assert not local_agent.sent[0].startswith("## Workspace context (Notion MCP)")
+
+
+@pytest.mark.parametrize(
+    ("flags", "message"),
+    [
+        (["--dry-run", "--notion-mode", "mcp"], "--dry-run cannot be used"),
+        (["--mock-agent", "--notion-mode", "mcp"], "--mock-agent cannot be used"),
+    ],
+)
+def test_mcp_mode_flag_conflicts(
+    monkeypatch: pytest.MonkeyPatch, flags: list[str], message: str, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["postmortem-agent", "--bundle", str(Path("examples/incidents/inc-example")), *flags],
+    )
+    with pytest.raises(SystemExit):
+        cli.main()
+    assert message in capsys.readouterr().err
+
+
+def test_mcp_mode_does_not_call_http_publisher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    postmortem = tmp_path / "postmortem.md"
+    postmortem.write_text("# Incident\n", encoding="utf-8")
+    (tmp_path / "publish.json").write_text(
+        json.dumps(
+            {"page_id": "page-id", "page_url": "https://notion.so/page-id", "blocks_written": 3}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NOTION_TOKEN", "notion-secret")
+    monkeypatch.setenv("NOTION_PARENT_PAGE_ID", "parent-id")
+    monkeypatch.setattr(cli, "run_workflow", lambda *_args, **_kwargs: postmortem)
+    monkeypatch.setattr(
+        cli, "publish_markdown", lambda *_args, **_kwargs: pytest.fail("HTTP publisher called")
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "postmortem-agent",
+            "--bundle",
+            "examples/incidents/inc-example",
+            "--notion-mode",
+            "mcp",
+        ],
+    )
+    cli.main()
+    assert "https://notion.so/page-id" in capsys.readouterr().out
 
 
 def test_custom_tools_and_errors(tmp_path: Path) -> None:
