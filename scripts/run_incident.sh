@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 PYTHON="$ROOT/.venv/bin/python"
 PORT=${CHECKOUT_PORT:-8000}
 SERVICE_PID=
@@ -33,7 +33,8 @@ while time.time() < deadline:
 else:
     raise SystemExit('service did not start')" 
 
-LOAD_STARTED_AT=$(date +%s.%N)
+# BSD date has no %N, so take the sub-second load start time from Python.
+LOAD_STARTED_AT=$("$PYTHON" -c "import time; print(time.time())")
 "$PYTHON" tools/loadgen.py --url "http://127.0.0.1:$PORT/checkout" --rps "${INCIDENT_RPS:-20}" \
     --duration "${INCIDENT_DURATION:-80}" --output var/metrics.csv &
 LOADGEN_PID=$!
@@ -52,4 +53,8 @@ WATCHDOG_PID=
 kill "$LOADGEN_PID" 2>/dev/null || true
 wait "$LOADGEN_PID" 2>/dev/null || true
 LOADGEN_PID=
-printf 'Incident bundle: %s\n' "$(find incidents -mindepth 1 -maxdepth 1 -type d -name 'inc-*' | sort | tail -1)"
+LATEST_BUNDLE=$("$PYTHON" -c "from pathlib import Path
+root = Path('incidents')
+bundles = [path for path in root.iterdir() if path.is_dir() and path.name.startswith('inc-')]
+print(max(bundles, key=lambda path: path.stat().st_mtime) if bundles else '')")
+printf 'Incident bundle: %s\n' "$LATEST_BUNDLE"
