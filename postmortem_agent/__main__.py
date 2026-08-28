@@ -9,7 +9,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from .notion import publish_markdown
+from .notion import normalize_page_id, publish_markdown
 from .runner import run_workflow
 
 
@@ -38,10 +38,11 @@ def main() -> None:
         return
     if not args.notion_parent:
         raise SystemExit("NOTION_PARENT_PAGE_ID or --notion-parent is required for publishing")
+    parent_id = normalize_page_id(args.notion_parent)
     rca = json.loads((postmortem.parent / "rca.json").read_text(encoding="utf-8"))
     page_id = publish_markdown(
         postmortem.read_text(encoding="utf-8"),
-        args.notion_parent,
+        parent_id,
         token,
         title=rca["title"],
         incident_id=rca["incident_id"],

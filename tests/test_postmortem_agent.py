@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from postmortem_agent.notion import chunk_blocks, markdown_to_blocks, publish_markdown
+from postmortem_agent.notion import (
+    chunk_blocks,
+    markdown_to_blocks,
+    normalize_page_id,
+    publish_markdown,
+)
 from postmortem_agent.runner import (
     MockAgent,
     remediation_skip_summary,
@@ -141,6 +146,19 @@ def test_markdown_conversion_and_chunking() -> None:
         "code",
     ]
     assert list(chunk_blocks([{}] * 201, size=100)) == [[{}] * 100, [{}] * 100, [{}]]
+
+
+def test_normalize_page_id_accepts_url_and_bare_id() -> None:
+    dashed = "3c956b27-7f24-80ee-8e02-f4fa65b9f7e0"
+    url = (
+        "https://app.notion.com/p/Postmortem-3c956b277f2480ee8e02f4fa65b9f7e0"
+        "?t=3c956b277f2480548cf400a9eefe4b32&showMoveTo=true"
+    )
+    assert normalize_page_id(url) == dashed
+    assert normalize_page_id("3c956b277f2480ee8e02f4fa65b9f7e0") == dashed
+    assert normalize_page_id(dashed) == dashed
+    with pytest.raises(ValueError):
+        normalize_page_id("not-a-page")
 
 
 def test_notion_publisher_chunks_requests() -> None:

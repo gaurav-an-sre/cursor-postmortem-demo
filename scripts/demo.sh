@@ -2,8 +2,9 @@
 # One-shot local demo: create an incident, then run the postmortem agent on it.
 #
 # Usage:
-#   ./scripts/demo.sh                # fully offline: mock agent + Notion dry-run
-#   ./scripts/demo.sh --mock-agent   # mock RCA, live Notion publish (needs NOTION_TOKEN + NOTION_PARENT_PAGE_ID)
+#   ./scripts/demo.sh                # fully offline: mock agent + Notion dry-run  (== make demo)
+#   ./scripts/demo.sh --mock-agent   # mock RCA, live Notion publish              (== make demo-notion)
+#                                    # (live publish needs NOTION_TOKEN + NOTION_PARENT_PAGE_ID)
 #   NOTION_TOKEN=... NOTION_PARENT_PAGE_ID=... CURSOR_API_KEY=... ./scripts/demo.sh
 #                                    # live Cursor SDK agent + live Notion publish
 # Any arguments are passed straight through to `python -m postmortem_agent`.

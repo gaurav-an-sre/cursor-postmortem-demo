@@ -5,10 +5,30 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
 NOTION_API = "https://api.notion.com/v1"
+
+_PAGE_ID_HEX = re.compile(r"[0-9a-fA-F]{32}")
+
+
+def normalize_page_id(value: str) -> str:
+    """Return a dashed Notion page id from a bare id or a full Notion page URL.
+
+    Notion page URLs embed the id as the final 32 hex characters of the path
+    (for example ``.../Postmortem-<32hex>``). Query parameters such as ``?t=``
+    carry a different id, so they are dropped before matching.
+    """
+    raw = value.strip().split("?", 1)[0]
+    if "://" in raw:
+        raw = urlparse(raw).path
+    candidates = _PAGE_ID_HEX.findall(raw.replace("-", ""))
+    if not candidates:
+        raise ValueError(f"no Notion page id found in {value!r}")
+    hex_id = candidates[-1].lower()
+    return f"{hex_id[:8]}-{hex_id[8:12]}-{hex_id[12:16]}-{hex_id[16:20]}-{hex_id[20:]}"
 
 
 def _text(content: str) -> list[dict[str, Any]]:
